@@ -49,7 +49,7 @@ function show_help_and_exit()
 function show_version_and_exit()
 {
   # show current version
-  echo "v2017-09-05"
+  echo "v2017-09-06"
 
   # signalize success
   exit 0
@@ -351,6 +351,11 @@ if [ "$RNG" == "DAY" ] ; then
           IDSTART="Events"
           IDSTOP="Births"
           ;;
+
+    # unknown identifier
+    *) echo "unknown language identifier: $LAN"
+       exit 1
+      ;;
 
   esac
 
