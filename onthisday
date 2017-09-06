@@ -355,7 +355,7 @@ if [ "$RNG" == "DAY" ] ; then
     # unknown identifier
     *) echo "unknown language identifier: $LAN"
        exit 1
-      ;;
+       ;;
 
   esac
 
