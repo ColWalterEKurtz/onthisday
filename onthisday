@@ -68,7 +68,7 @@ function get_html()
        --user-agent=""                   \
        --timeout="30"                    \
        -O -                              \
-      "$URL"                             \
+      "$1"                               \
   | tr "\n" " "                          \
   | sed -re "s/(<[^>]+>)/\x0A\1/g"       \
   | sed -re "/^<script/,/^<\/script>/ d" \
