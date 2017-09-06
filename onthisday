@@ -1,0 +1,405 @@
+#!/bin/bash
+
+# ------------------------------------------------------------------------------
+# functions                                                            functions
+# ------------------------------------------------------------------------------
+
+# ------------------
+# show_help_and_exit
+# ------------------
+#
+#
+#
+function show_help_and_exit()
+{
+  echo
+  echo "$(basename "$0") extracts the events from one of Wikipedia's \"On this day...\" pages."
+  echo
+  echo "Usage: $(basename "$0") [OPTIONS]"
+  echo
+  echo "Options:"
+  echo "  -h          show help and exit"
+  echo "  -v          show version and exit"
+  echo "  -m <1..12>  set month    (default: date +%m)"
+  echo "  -d <1..31>  set day      (default: date +%d)"
+  echo "  -l {en|de}  set language (default: en)"
+  echo "  -y          run $(basename "$0") for each day of a year"
+  echo
+  echo "Examples:"
+  echo
+  echo "  $(basename "$0") -m 10 -d 3 -l de | sort -g"
+  echo "    this gets all events from October 3 in german language"
+  echo "    and sorts them chronologically"
+  echo
+  echo "  $(basename "$0") -y | tee all_events_en"
+  echo "    this gets all events from Wikipedia'a database"
+  echo "    and writes them to \"all_events_en\""
+  echo
+
+  # signalize success
+  exit 0
+}
+
+# ---------------------
+# show_version_and_exit
+# ---------------------
+#
+#
+#
+function show_version_and_exit()
+{
+  # show current version
+  echo "v2017-09-05"
+
+  # signalize success
+  exit 0
+}
+
+# --------
+# get_html
+# --------
+#
+# $1  URL
+#
+function get_html()
+{
+  # send query
+  wget --quiet                           \
+       --user-agent=""                   \
+       --timeout="30"                    \
+       -O -                              \
+      "$URL"                             \
+  | tr "\n" " "                          \
+  | sed -re "s/(<[^>]+>)/\x0A\1/g"       \
+  | sed -re "/^<script/,/^<\/script>/ d" \
+  | sed -re "s/[[:space:]]+/ /g"         \
+  | sed -re "$ s/$/\x0A/"
+}
+
+# --------------
+# get_list_items
+# --------------
+#
+# $1  start ID
+# $2  stop ID
+#
+function get_list_items()
+{
+  sed --quiet           \
+      --regexp-extended \
+      --expression="
+
+        # skip thes lines at the beginning
+        1,/<span class=\"mw-headline\" id=\"$1\">/ { d }
+
+        # skip thes lines at the end
+        /<span class=\"mw-headline\" id=\"$2\">/,$ { d }
+
+        # lines between <li> and </li>
+        /<[Ll][Ii]>/,/<\/[Ll][Ii]>/ {
+
+          # start tag: empty hold space
+          /<[Ll][Ii]>/ { z; h; b }
+
+          # end tag: print hold space
+          /<\/[Ll][Ii]>/ {
+
+            # copy hold space to pattern space
+            g
+
+            # concatenate lines and remove leading and trailing spaces
+            s|[[:space:]]+| |g
+            s|^ ||
+            s| $||
+
+            # skip lines that don't start with digits
+            /^[[:digit:]]/! { d }
+
+            # print pattern space
+            p
+
+            # branch to end of script
+            b
+          }
+
+          # skip hidden parts
+          /<span style=\"visibility:hidden;\">/,/<\/span>/ { d }
+          /<span style=\"display:none;\">/,/<\/span>/ { d }
+
+          # skip references
+          /<sup id=\"cite_ref/,/<\/sup>/ { d }
+
+          # remove image tags
+          s|<[Ii][Mm][Gg] [^>]+>||
+
+          # remove anchor tags
+          s|<[Aa] [^>]+>||
+          s|</[Aa]>||
+
+          # remove div tags
+          s|<[Dd][Ii][Vv] [^>]+>||
+          s|</?[Dd][Ii][Vv]>||
+
+          # remove span tags
+          s|<[Ss][Pp][Aa][Nn] [^>]+>||
+          s|</?[Ss][Pp][Aa][Nn]>||
+
+          # remove bold tags
+          s|</?[Bb]>||
+
+          # remove italic tags
+          s|</?[Ii]>||
+
+          # remove br tags
+          s|<[Bb][Rr]( /)?>||
+
+          # remove sub and sup tags
+          s|</?[Ss][Uu][BbPp]>||
+
+          # remove small tags
+          s|</?[Ss][Mm][Aa][Ll]{2}>||
+
+          # skip empty lines
+          /^$/ { d }
+
+          # append pattern space to hold space      
+          H
+        }
+      "
+}
+
+# -------
+# asciify
+# -------
+#
+#
+#
+function asciify()
+{
+  sed --regexp-extended \
+      --expression="
+
+        # HTML to ASCII
+        s/&#160;//g
+        s/&lt;/</g
+        s/&gt;/>/g
+        s/&amp;/\&/g
+
+        # UTF-8 to ASCII
+        s/–/-/g
+        s|„|\"|g;
+        s|“|\"|g
+      "
+}
+
+# -------
+# unspace
+# -------
+#
+# Try to remove some space characters, that have been inserted
+# in form of line breaks by sed -re "s/(<[^>]+>)/\x0A\1/g"
+# in the get_html() function.
+#
+function unspace()
+{
+  sed --regexp-extended \
+      --expression="
+
+        # reconnect punctuation characters
+        s|([[:alnum:]\"\.\)]) ([\.,:;!\?%])|\1\2|g
+
+        # reconnect hyphens
+        s|([[:alpha:]]) (-[[:alpha:]])|\1\2|g
+
+        # reconnect apostrophes
+        s|([^:]) 's|\1's|g
+        s|s '([^[:alnum:]])|s'\1|g
+
+        # remove inserted space
+        s/\"[[:space:]]*([^\"]*[^[:space:]])[[:space:]]*\"/\"\1\"/g
+        s/\([[:space:]]*([^\(\)]*[^[:space:]])[[:space:]]*\)/(\1)/g
+      "
+}
+
+# -----------
+# format_date
+# -----------
+#
+# $1  month (zero padded)
+# $2  day   (zero padded)
+#
+# all lines should be formatted as follows:
+# BC:  -YYYY-MM-DD: event
+# AC:  +YYYY-MM-DD: event
+#
+function format_date()
+{
+  sed --regexp-extended \
+      --expression="
+
+        # append month and day
+        s|^[[:digit:]]+|&-$1-$2|
+
+        # insert leading zeros
+        s|^[[:digit:]]{1}-|0&|
+        s|^[[:digit:]]{2}-|0&|
+        s|^[[:digit:]]{3}-|0&|
+
+        # set negative (english)
+        s|^([[:digit:]-]+) +BCE?|-\1|
+
+        # set negative (german)
+        s|^([[:digit:]-]+) +v\. *Chr\.|-\1|
+
+        # set positive
+        s|^[[:digit:]]|+&|
+
+        # separate date and event
+        s|^([[:digit:]+-]+)[[:space:]:-]+(.+)|\1: \2|
+      "
+}
+
+# ------------------------------------------------------------------------------
+# options                                                                options
+# ------------------------------------------------------------------------------
+
+# set default values
+LAN="en"
+MON=$(date +'%m')
+DAY=$(date +'%d')
+RNG="DAY"
+
+# check passed options
+while getopts ":d:hl:m:vy" OPTION "$@"
+do
+
+  case "$OPTION" in
+
+    # set day
+    "d") DAY="$OPTARG"
+         ;;
+
+    # show help
+    "h") show_help_and_exit
+         ;;
+
+    # set language identifier
+    "l") LAN="$OPTARG"
+         ;;
+
+    # set month
+    "m") MON="$OPTARG"
+         ;;
+
+    # show version
+    "v") show_version_and_exit
+         ;;
+
+    # extract entire year
+    "y") RNG="YEAR"
+         ;;
+
+    "?") echo "unknown option: -$OPTARG"
+         exit 1
+         ;;
+
+    ":") echo "missing argument: -$OPTARG <argument>"
+         exit 1
+         ;;
+
+  esac
+
+done
+
+# drop all parsed options
+shift $(( OPTIND - 1 ))
+
+# check first positional parameter
+if [ -n "$1" ] ; then
+
+  # notify user
+  echo "no positional parameters allowed"
+
+  # signalize trouble
+  exit 1
+
+fi
+
+# ------------------------------------------------------------------------------
+# commands                                                              commands
+# ------------------------------------------------------------------------------
+
+# query one single day
+if [ "$RNG" == "DAY" ] ; then
+
+  # this date will be passed to the date command (use leap year)
+  THISDAY="2000-$MON-$DAY 12:00:00"
+
+  # evaluate language ID
+  case "$LAN" in
+
+    # german events
+    "de") TFORMAT="de_DE.UTF-8"
+          URLSTUB="https://de.wikipedia.org/wiki/%-d._%B"
+          IDSTART="Politik_und_Weltgeschehen"
+          IDSTOP="Geboren"
+          ;;
+
+    # english events
+    "en") TFORMAT="en_US.UTF-8"
+          URLSTUB="https://en.wikipedia.org/wiki/%B_%-d"
+          IDSTART="Events"
+          IDSTOP="Births"
+          ;;
+
+  esac
+
+  # get related url
+  URL=$(LC_TIME="$TFORMAT" date -d "$THISDAY" +"$URLSTUB" 2>"/dev/null")
+
+  # check url
+  if [ -z "$URL" ]; then
+
+    # notify user
+    echo "invalid date given"
+
+    # signalize trouble
+    exit 1
+
+  fi
+
+  # assert padded numbers
+  DAY=$(date -d "$THISDAY" +'%d')
+  MON=$(date -d "$THISDAY" +'%m')
+
+  # get and format events
+  get_html "$URL"                       \
+  | get_list_items "$IDSTART" "$IDSTOP" \
+  | asciify                             \
+  | unspace                             \
+  | format_date "$MON" "$DAY"
+
+# query entire year
+else
+
+  QDATE=$(date -d "2000-01-01 12:00:00" +"%F")
+  EDATE=$(date -d "2001-01-01 12:00:00" +"%F")
+
+  while [ "$QDATE" != "$EDATE" ]
+  do
+
+    DAY=$(date -d "$QDATE" +'%d')
+    MON=$(date -d "$QDATE" +'%m')
+
+    ./onthisday -m "$MON" -d "$DAY" -l "$LAN"
+
+    # add one day
+    QDATE=$(date -d "$QDATE 1 day" +"%F")
+
+  done
+
+fi
+
+# signalize success
+exit 0
+
